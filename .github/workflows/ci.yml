@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  web:
+    name: Web UI tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+
+  macos:
+    name: Mac app
+    # macOS 运行器按更高倍率计费，只在 Actions 页面手动触发时运行。
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p build
+          clang -fobjc-arc -Wall mac/*.m -framework Cocoa -framework WebKit -framework Carbon -o build/Teleprompter
+          clang -fobjc-arc -I mac tests/mac_test.m mac/TPSupport.m mac/TPHotkeys.m -framework Cocoa -framework Carbon -o build/mac-test
+          build/mac-test

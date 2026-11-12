@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>口播提词器</title>
+<style>
+:root {
+  --bg: #f5f5f7; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --border: #d2d2d7;
+  --accent: #0a64d6; --accent-soft: rgba(10, 100, 214, .12); --field: #ffffff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1e1e1e; --panel: #2a2a2c; --text: #f2f2f7; --muted: #a1a1a6; --border: #48484a;
+          --accent: #3b8cf0; --accent-soft: rgba(59, 140, 240, .18); --field: #1c1c1e; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font: 14px -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+[hidden] { display: none !important; }
+
+/* ---------------- 编辑模式 ---------------- */
+body[data-mode="editor"] { background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+.editor-header { display: flex; align-items: center; gap: 10px; padding: 14px 20px 8px; }
+.editor-header h1 { font-size: 20px; margin: 0; }
+.editor-body { flex: 1; display: flex; gap: 16px; padding: 0 20px 16px; min-height: 0; }
+.script-pane { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.script-pane textarea { flex: 1; width: 100%; resize: none; padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--field); color: var(--text); font: 16px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei UI", sans-serif; }
+.settings-pane { width: 300px; flex: none; overflow: auto; display: flex; flex-direction: column; gap: 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.settings-pane h2 { font-size: 13px; margin: 6px 0 0; color: var(--muted); font-weight: 600; }
+.field { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; }
+.field label { font-size: 13px; }
+.field output { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.field input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.muted { color: var(--muted); font-size: 12px; }
+button.btn { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px;
+  padding: 6px 14px; font: inherit; cursor: pointer; }
+button.btn:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+select { font: inherit; background: var(--field); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
+.keys kbd { font: 12px ui-monospace, Menlo, monospace; background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; }
+.status { padding: 0 20px 12px; color: var(--muted); font-size: 12px; }
+
+/* ---------------- 提词模式 ---------------- */
+body[data-mode="prompter"] { background: transparent; color: #fff; overflow: hidden; user-select: none; }
+[data-mode="prompter"] #stage { position: absolute; inset: 0; overflow: hidden; }
+[data-mode="prompter"] #stage.mirror-x { transform: scaleX(-1); }
+[data-mode="prompter"] #stage.mirror-y { transform: scaleY(-1); }
+[data-mode="prompter"] #stage.mirror-x.mirror-y { transform: scale(-1, -1); }
+[data-mode="prompter"] #scroller { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+[data-mode="prompter"] #content { margin: 0 auto; padding-bottom: 60vh; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+[data-mode="prompter"] #content p { margin: 0 0 .6em; }
+[data-mode="prompter"] #content p.heading { font-size: .6em; color: #8fc1ff; letter-spacing: .05em; margin-top: .8em; }
+[data-mode="prompter"] #content p.pause { font-size: .45em; color: #ffcf6e; text-align: center; letter-spacing: .3em; }
+[data-mode="prompter"] #content .s { transition: opacity .25s, color .25s; }
+body.highlight[data-mode="prompter"] #content .s { opacity: .45; }
+body.highlight[data-mode="prompter"] #content .s.read { opacity: .3; }
+body.highlight[data-mode="prompter"] #content .s.current { opacity: 1; color: #fff; }
+[data-mode="prompter"] #guide { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid rgba(255, 207, 110, .55); pointer-events: none; }
+[data-mode="prompter"] #guide::before { content: ""; position: absolute; left: 6px; top: -9px; border: 8px solid transparent; border-left: 12px solid #ffcf6e; }
+[data-mode="prompter"] #countdown { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 160px; font-weight: 700; color: #ffcf6e; text-shadow: 0 4px 20px rgba(0, 0, 0, .6); pointer-events: none; }
+[data-mode="prompter"] #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, .6); font-size: 18px; }
+[data-mode="prompter"] #toolbar { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 4px; align-items: center;
+  padding: 6px 8px; border-radius: 12px; background: rgba(30, 30, 32, .85); opacity: .35; transition: opacity .2s; font-size: 13px; }
+body.paused #toolbar, [data-mode="prompter"] #toolbar:hover { opacity: 1; }
+[data-mode="prompter"] #toolbar button { background: none; border: none; color: #fff; font: 15px -apple-system, sans-serif; min-width: 30px; height: 28px;
+  border-radius: 7px; cursor: pointer; }
+[data-mode="prompter"] #toolbar button:hover { background: rgba(255, 255, 255, .15); }
+[data-mode="prompter"] #toolbar .info { color: rgba(255, 255, 255, .75); font-variant-numeric: tabular-nums; padding: 0 6px; white-space: nowrap; }
+[data-mode="prompter"] #progress { position: absolute; left: 0; bottom: 0; height: 3px; background: #ffcf6e; width: 0; }
+</style>
+</head>
+<body>
+
+<!-- 编辑模式 -->
+<template id="editor-template">
+  <div class="editor-header">
+    <h1>口播提词器</h1><span class="grow"></span>
+    <button class="btn" id="importBtn">导入稿子…</button>
+    <button class="btn" id="showBtn">显示提词器</button>
+    <button class="btn" id="restartBtn">从头开始</button>
+    <button class="btn primary" id="playBtn">开始</button>
+  </div>
+  <div class="editor-body">
+    <div class="script-pane">
+      <textarea id="script" spellcheck="false" placeholder="把口播稿粘贴到这里。&#10;# 开头的行是段落标题，[停顿] 单独一行会显示停顿提示。"></textarea>
+      <div class="row muted"><span id="stats"></span><span class="grow"></span><span id="progressText"></span></div>
+    </div>
+    <div class="settings-pane">
+      <h2>滚动</h2>
+      <div class="field"><label for="speed">语速（字/分钟）</label><output id="speedOut"></output>
+        <input type="range" id="speed" min="60" max="600" step="10"></div>
+      <div class="field"><label for="countdown">开始倒计时（秒）</label><output id="countdownOut"></output>
+        <input type="range" id="countdown" min="0" max="10" step="1"></div>
+      <h2>显示</h2>
+      <div class="field"><label for="fontSize">字号</label><output id="fontSizeOut"></output>
+        <input type="range" id="fontSize" min="20" max="120" step="2"></div>
+      <div class="field"><label for="lineWidth">行宽</label><output id="lineWidthOut"></output>
+        <input type="range" id="lineWidth" min="40" max="100" step="5"></div>
+      <div class="field"><label for="guide">阅读线位置</label><output id="guideOut"></output>
+        <input type="range" id="guide" min="10" max="70" step="5"></div>
+      <div class="field"><label for="opacity">背景不透明度</label><output id="opacityOut"></output>
+        <input type="range" id="opacity" min="0" max="100" step="5"></div>
+      <div class="row"><label for="align">对齐</label>
+        <select id="align"><option value="left">左对齐</option><option value="center">居中</option></select></div>
+      <label class="check"><input type="checkbox" id="highlight"> 高亮当前句</label>
+      <label class="check"><input type="checkbox" id="mirrorX"> 左右镜像（提词玻璃）</label>
+      <label class="check"><input type="checkbox" id="mirrorY"> 上下翻转</label>
+      <h2>窗口</h2>
+      <label class="check"><input type="checkbox" id="hideFromCapture"> 录屏、直播时隐藏提词器</label>
+      <div class="muted">开启后，屏幕录制和共享画面里看不到提词器窗口（部分录屏软件可能不遵守，请先试录确认）。</div>
+      <h2>全局快捷键</h2>
+      <div class="keys">
+        <kbd>⌥⌘P</kbd><span>开始 / 暂停</span>
+        <kbd>⌥⌘= / −</kbd><span>加速 / 减速</span>
+        <kbd>⌥⌘[ / ]</kbd><span>回退 / 前进几行</span>
+        <kbd>⌥⌘R</kbd><span>从头开始</span>
+        <kbd>⌥⌘T</kbd><span>显示 / 隐藏提词器</span>
+      </div>
+      <div class="muted">提词器窗口内：空格开始/暂停，方向键调整，滚轮手动滚动，+/- 调字号。</div>
+    </div>
+  </div>
+  <div class="status" id="status">准备就绪</div>
+</template>
+
+<!-- 提词模式 -->
+<template id="prompter-template">
+  <div id="stage"><div id="scroller"><div id="content"></div></div><div id="guide"></div></div>
+  <div id="empty" hidden>在“口播提词器”窗口里粘贴稿子</div>
+  <div id="countdown" hidden></div>
+  <div id="toolbar">
+    <button id="tbRestart" title="从头开始 (R)">⏮</button>
+    <button id="tbBack" title="回退 (←)">⏪</button>
+    <button id="tbPlay" title="开始/暂停 (空格)">▶</button>
+    <button id="tbForward" title="前进 (→)">⏩</button>
+    <button id="tbSlower" title="减速 (↓)">−</button>
+    <span class="info" id="tbSpeed"></span>
+    <button id="tbFaster" title="加速 (↑)">+</button>
+    <button id="tbSmaller" title="缩小字号 (-)">A−</button>
+    <button id="tbBigger" title="放大字号 (+)">A+</button>
+    <span class="info" id="tbRemain"></span>
+    <button id="tbHide" title="隐藏提词器">✕</button>
+  </div>
+  <div id="progress"></div>
+</template>
+
+<script>
+'use strict';
+const DEFAULT_SETTINGS = {
+  speed: 220, countdown: 3, fontSize: 48, lineWidth: 90, guide: 30, opacity: 75,
+  align: 'left', highlight: true, mirrorX: false, mirrorY: false, hideFromCapture: true,
+};
+const DEFAULT_SCRIPT = '# 开场\n大家好，欢迎来到我的频道。今天给大家介绍一个做视频时特别好用的小工具。\n[停顿]\n# 正文\n把口播稿粘贴进来，点开始，文字就会按你设定的语速平滑滚动。黄色的阅读线标出你现在该读的位置，当前这句话会高亮显示。';
+
+// 与原生外壳通信。浏览器中（测试）没有原生外壳时，消息存入 window.__tpOutbox。
+function post(msg) {
+  try { window.webkit.messageHandlers.tp.postMessage(msg); }
+  catch (e) { (window.__tpOutbox = window.__tpOutbox || []).push(msg); }
+}
+const handlers = {};
+window.tp = { receive(msg) { const h = handlers[msg && msg.type]; if (h) h(msg); } };
+
+// FNV-1a，用于按稿子记住阅读位置。
+function hashText(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16);
+}
+// 统计朗读字数：中日韩字符各算 1，英文等按单词算约 5 个字符折合 1 字。
+function countChars(text) {
+  const cjk = (text.match(/[぀-ヿ㐀-鿿豈-﫿가-힯]/g) || []).length;
+  const latin = (text.replace(/[぀-ヿ㐀-鿿豈-﫿가-힯]/g, ' ').match(/[A-Za-z0-9'’-]+/g) || [])
+    .reduce((n, w) => n + w.length, 0);
+  return cjk + latin / 5;
+}
+function duration(sec) {
+  const t = Math.max(0, Math.round(sec)), pad = n => String(n).padStart(2, '0');
+  return t >= 3600 ? `${Math.floor(t / 3600)}:${pad(Math.floor(t / 60) % 60)}:${pad(t % 60)}` : `${Math.floor(t / 60)}:${pad(t % 60)}`;
+}
+// 把稿子拆成段落和句子。
+function parseScript(text) {
+  const blocks = [];
+  for (const raw of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^#+\s*/.test(line)) { blocks.push({ kind: 'heading', text: line.replace(/^#+\s*/, '') }); continue; }
+    if (/^\[(停顿|pause)\]$/i.test(line)) { blocks.push({ kind: 'pause', text: '· · · 停顿 · · ·' }); continue; }
+    const sentences = line.match(/[^。！？!?；;.…]+[。！？!?；;.…]*["”’』」）)]*|[。！？!?；;.…]+/g) || [line];
+    blocks.push({ kind: 'para', sentences: sentences.map(s => s.trim()).filter(Boolean) });
+  }
+  return blocks;
+}
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const mode = location.hash.replace('#', '') === 'prompter' ? 'prompter' : 'editor';
+document.body.dataset.mode = mode;
+document.body.appendChild(document.getElementById(mode + '-template').content.cloneNode(true));
+const $ = id => document.getElementById(id);
+
+// =====================================================================
+// 编辑模式：稿子与设置的唯一来源，变更后发给原生外壳转交提词窗口并保存。
+// =====================================================================
+function startEditor() {
+  const initial = window.tpInitialState || {};
+  const state = {
+    script: typeof initial.script === 'string' ? initial.script : DEFAULT_SCRIPT,
+    settings: Object.assign({}, DEFAULT_SETTINGS, initial.settings || {}),
+    positions: Object.assign({}, initial.positions || {}),
+    playing: false,
+  };
+  const ranges = ['speed', 'countdown', 'fontSize', 'lineWidth', 'guide', 'opacity'];
+  const checks = ['highlight', 'mirrorX', 'mirrorY', 'hideFromCapture'];
+  const units = { speed: '', countdown: ' 秒', fontSize: ' px', lineWidth: '%', guide: '%', opacity: '%' };
+  const setStatus = msg => { $('status').textContent = msg; };
+
+  function render() {
+    $('script').value = state.script;
+    ranges.forEach(k => { $(k).value = state.settings[k]; $(k + 'Out').textContent = state.settings[k] + units[k]; });
+    checks.forEach(k => { $(k).checked = !!state.settings[k]; });
+    $('align').value = state.settings.align;
+    renderStats();
+  }
+  function renderStats() {
+    const chars = Math.round(countChars(state.script));
+    $('stats').textContent = `约 ${chars} 字 · 按 ${state.settings.speed} 字/分钟约 ${duration(chars / state.settings.speed * 60)}`;
+    const ratio = state.positions[hashText(state.script)];
+    $('progressText').textContent = ratio > 0 ? `上次读到 ${Math.round(ratio * 100)}%` : '';
+    $('playBtn').textContent = state.playing ? '暂停' : '开始';
+  }
+  let timer = 0;
+  function sync(immediate) {
+    clearTimeout(timer);
+    const send = () => {
+      const hash = hashText(state.script);
+      post({ type: 'update', script: state.script, settings: state.settings, hash, position: state.positions[hash] || 0 });
+      post({ type: 'store', state: { script: state.script, settings: state.settings, positions: state.positions } });
+    };
+    if (immediate) send(); else timer = setTimeout(send, 150);
+  }
+
+  $('script').addEventListener('input', () => { state.script = $('script').value; renderStats(); sync(); });
+  ranges.forEach(k => $(k).addEventListener('input', () => {
+    state.settings[k] = Number($(k).value); $(k + 'Out').textContent = state.settings[k] + units[k]; renderStats(); sync();
+  }));
+  checks.forEach(k => $(k).addEventListener('change', () => { state.settings[k] = $(k).checked; sync(); }));
+  $('align').addEventListener('change', () => { state.settings.align = $('align').value; sync(); });
+  $('importBtn').addEventListener('click', () => post({ type: 'import' }));
+  $('showBtn').addEventListener('click', () => post({ type: 'command', command: 'show' }));
+  $('playBtn').addEventListener('click', () => post({ type: 'command', command: 'toggle' }));
+  $('restartBtn').addEventListener('click', () => post({ type: 'command', command: 'restart' }));
+
+  handlers.imported = msg => {
+    state.script = msg.text || '';
+    render();
+    sync(true);
+    setStatus(`已导入 ${msg.name || '稿子'}`);
+  };
+  handlers.status = msg => setStatus(msg.text);
+  // 来自提词窗口：阅读位置、播放状态、在提词窗口里调整的设置。
+  handlers.position = msg => {
+    if (msg.hash !== hashText(state.script)) return;
+    state.positions[msg.hash] = msg.ratio;
+    renderStats();
+    clearTimeout(handlers.position.t);
+    handlers.position.t = setTimeout(() => post({ type: 'store', state: { script: state.script, settings: state.settings, positions: state.positions } }), 500);
+  };
+  handlers.playback = msg => {
+    state.playing = !!msg.playing;
+    renderStats();
+    if (msg.finished) setStatus('已读完');
+  };
+  handlers.settings = msg => { Object.assign(state.settings, msg.patch || {}); render(); sync(true); };
+  handlers.requestUpdate = () => sync(true);
+
+  render();
+  sync(true);
+  window.__tpEditor = state;
+}
+
+// =====================================================================
+// 提词模式：渲染、滚动、高亮、倒计时。
+// =====================================================================
+function startPrompter() {
+  const st = {
+    script: '', hash: '', settings: Object.assign({}, DEFAULT_SETTINGS),
+    offset: 0, max: 0, playing: false, countdownLeft: 0, lastTs: 0, pxPerSec: 0,
+    spans: [], tops: [], current: -1, lastPositionPost: 0, totalChars: 0,
+  };
+  const stage = $('stage'), scroller = $('scroller'), content = $('content');
+
+  function layout() {
+    const s = st.settings;
+    content.style.fontSize = s.fontSize + 'px';
+    content.style.lineHeight = '1.5';
+    content.style.width = s.lineWidth + '%';
+    content.style.textAlign = s.align;
+    $('guide').style.top = (s.guide / 100 * stage.clientHeight) + 'px';
+    stage.classList.toggle('mirror-x', !!s.mirrorX);
+    stage.classList.toggle('mirror-y', !!s.mirrorY);
+    document.body.classList.toggle('highlight', !!s.highlight);
+    // 内容高度与字数决定每秒滚动的像素数，使滚动速度对应“字/分钟”。
+    const height = Math.max(1, content.scrollHeight - parseFloat(getComputedStyle(content).paddingBottom));
+    st.max = Math.max(0, height - s.fontSize * 0.75);
+    st.pxPerSec = st.totalChars > 0 ? (s.speed / 60) * (height / st.totalChars) : 0;
+    st.tops = st.spans.map(span => [span.offsetTop, span.offsetTop + span.offsetHeight]);
+    st.offset = clamp(st.offset, 0, st.max);
+    paint();
+  }
+  function renderContent() {
+    content.textContent = '';
+    st.spans = [];
+    for (const block of parseScript(st.script)) {
+      const p = document.createElement('p');
+      if (block.kind !== 'para') {
+        p.className = block.kind;
+        p.textContent = block.text;
+      } else {
+        block.sentences.forEach((sentence, i) => {
+          const span = document.createElement('span');
+          span.className = 's';
+          span.textContent = sentence + (i < block.sentences.length - 1 ? ' ' : '');
+          p.appendChild(span);
+          st.spans.push(span);
+        });
+      }
+      content.appendChild(p);
+    }
+    st.totalChars = countChars(st.script);
+    $('empty').hidden = st.spans.length > 0;
+    st.current = -1;
+  }
+  function paint() {
+    // 阅读线穿过当前行的中间：内容坐标 offset + 半行高 对齐阅读线。
+    const guideY = st.settings.guide / 100 * stage.clientHeight;
+    const half = lineHeight() / 2;
+    scroller.style.transform = `translateY(${guideY - st.offset - half}px)`;
+    let current = -1;
+    for (let i = 0; i < st.tops.length; i++) {
+      if (st.tops[i][1] > st.offset + half) { current = i; break; }
+    }
+    if (current !== st.current) {
+      st.spans.forEach((span, i) => {
+        span.classList.toggle('current', i === current);
+        span.classList.toggle('read', current >= 0 && i < current);
+      });
+      st.current = current;
+    }
+    const ratio = st.max > 0 ? st.offset / st.max : 0;
+    $('progress').style.width = (ratio * 100) + '%';
+    const remain = st.pxPerSec > 0 ? (st.max - st.offset) / st.pxPerSec : 0;
+    $('tbRemain').textContent = '剩 ' + duration(remain);
+    $('tbSpeed').textContent = st.settings.speed + ' 字/分';
+    $('tbPlay').textContent = st.playing || st.countdownLeft > 0 ? '⏸' : '▶';
+    document.body.classList.toggle('paused', !st.playing && st.countdownLeft === 0);
+  }
+  function postPosition(force) {
+    const now = performance.now();
+    if (!force && now - st.lastPositionPost < 1000) return;
+    st.lastPositionPost = now;
+    post({ type: 'position', hash: st.hash, ratio: st.max > 0 ? +(st.offset / st.max).toFixed(4) : 0 });
+  }
+  function setPlaying(playing, finished) {
+    const was = st.playing;
+    st.playing = playing;
+    st.lastTs = 0;
+    if (playing) requestAnimationFrame(tick);
+    if (was !== playing || finished) post({ type: 'playback', playing, finished: !!finished });
+    if (!playing) postPosition(true);
+    paint();
+  }
+  function tick(ts) {
+    if (!st.playing) return;
+    if (st.lastTs) {
+      const dt = Math.min(0.25, (ts - st.lastTs) / 1000);
+      st.offset = Math.min(st.max, st.offset + st.pxPerSec * dt);
+      paint();
+      postPosition(false);
+      if (st.offset >= st.max) { setPlaying(false, true); return; }
+    }
+    st.lastTs = ts;
+    requestAnimationFrame(tick);
+  }
+  let countdownTimer = 0;
+  function cancelCountdown() {
+    clearInterval(countdownTimer);
+    st.countdownLeft = 0;
+    $('countdown').hidden = true;
+  }
+  function play() {
+    if (st.playing || st.countdownLeft > 0 || !st.spans.length) return;
+    if (st.offset >= st.max) st.offset = 0;
+    const seconds = st.settings.countdown;
+    if (seconds <= 0) { setPlaying(true); return; }
+    st.countdownLeft = seconds;
+    $('countdown').textContent = seconds;
+    $('countdown').hidden = false;
+    post({ type: 'playback', playing: true });
+    paint();
+    countdownTimer = setInterval(() => {
+      st.countdownLeft--;
+      if (st.countdownLeft <= 0) { cancelCountdown(); setPlaying(true); return; }
+      $('countdown').textContent = st.countdownLeft;
+    }, 1000);
+  }
+  function pause() {
+    if (st.countdownLeft > 0) { cancelCountdown(); post({ type: 'playback', playing: false }); paint(); return; }
+    setPlaying(false);
+  }
+  function lineHeight() { return st.settings.fontSize * 1.5; }
+  function moveBy(px) { st.offset = clamp(st.offset + px, 0, st.max); paint(); postPosition(true); }
+  function changeSetting(patch) {
+    Object.assign(st.settings, patch);
+    layout();
+    post({ type: 'settings', patch });
+  }
+  const commands = {
+    toggle: () => (st.playing || st.countdownLeft > 0 ? pause() : play()),
+    play, pause,
+    restart: () => { pause(); st.offset = 0; paint(); postPosition(true); play(); },
+    back: () => moveBy(-3 * lineHeight()),
+    forward: () => moveBy(3 * lineHeight()),
+    faster: () => changeSetting({ speed: clamp(st.settings.speed + 10, 60, 600) }),
+    slower: () => changeSetting({ speed: clamp(st.settings.speed - 10, 60, 600) }),
+    bigger: () => changeSetting({ fontSize: clamp(st.settings.fontSize + 4, 20, 120) }),
+    smaller: () => changeSetting({ fontSize: clamp(st.settings.fontSize - 4, 20, 120) }),
+    hide: () => { pause(); post({ type: 'hide' }); },
+  };
+
+  handlers.update = msg => {
+    const changedScript = msg.script !== st.script;
+    st.settings = Object.assign({}, DEFAULT_SETTINGS, msg.settings || {});
+    if (changedScript) {
+      st.script = msg.script || '';
+      st.hash = msg.hash || hashText(st.script);
+      renderContent();
+    }
+    layout();
+    if (changedScript) {
+      st.offset = clamp((msg.position || 0) * st.max, 0, st.max);
+      if (st.offset >= st.max) st.offset = 0;
+      paint();
+    }
+  };
+  handlers.command = msg => { const f = commands[msg.command]; if (f) f(); };
+
+  $('tbRestart').onclick = commands.restart;
+  $('tbBack').onclick = commands.back;
+  $('tbPlay').onclick = commands.toggle;
+  $('tbForward').onclick = commands.forward;
+  $('tbSlower').onclick = commands.slower;
+  $('tbFaster').onclick = commands.faster;
+  $('tbSmaller').onclick = commands.smaller;
+  $('tbBigger').onclick = commands.bigger;
+  $('tbHide').onclick = commands.hide;
+  window.addEventListener('keydown', e => {
+    const map = { ' ': 'toggle', ArrowUp: 'faster', ArrowDown: 'slower', ArrowLeft: 'back', ArrowRight: 'forward',
+                  r: 'restart', R: 'restart', '+': 'bigger', '=': 'bigger', '-': 'smaller', Escape: 'pause' };
+    const name = map[e.key];
+    if (name && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); commands[name](); }
+  });
+  window.addEventListener('wheel', e => {
+    e.preventDefault();
+    moveBy((st.settings.mirrorY ? -1 : 1) * e.deltaY);
+  }, { passive: false });
+  window.addEventListener('resize', layout);
+
+  renderContent();
+  layout();
+  post({ type: 'ready' });
+  window.__tpPrompter = st;
+  window.__tpCommands = commands;
+}
+
+if (mode === 'editor') startEditor(); else startPrompter();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "teleprompter",
+  "private": true,
+  "description": "口播提词器的网页界面测试",
+  "scripts": {
+    "test": "node tests/web.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
